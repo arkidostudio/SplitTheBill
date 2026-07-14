@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Split the Bill</title>
+<script src="https://unpkg.com/tesseract.js@5/dist/tesseract.min.js"></script>
+<style>
+  :root[data-theme="dark"] {
+    --bg: #0f1115;
+    --panel: #1a1d24;
+    --input: #0f1115;
+    --border: #2a2f3a;
+    --text: #e6e8ec;
+    --muted: #8a92a3;
+    --accent: #4f8cff;
+    --danger: #ff5c5c;
+  }
+  :root[data-theme="light"] {
+    --bg: #f5f6f8;
+    --panel: #ffffff;
+    --input: #ffffff;
+    --border: #dfe3ea;
+    --text: #1a1d24;
+    --muted: #6a7180;
+    --accent: #2563eb;
+    --danger: #dc2626;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0 auto;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    padding: 16px;
+    max-width: 1100px;
+  }
+  h1 { margin: 0; font-size: 22px; }
+  h2 { margin: 0 0 12px; font-size: 15px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+  .topbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+  .topbar .spacer { flex: 1; }
+  .meta { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+  .meta input, .meta select { flex: 1; min-width: 140px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px; }
+  button {
+    background: var(--accent); color: white; border: none;
+    padding: 8px 14px; border-radius: 6px; cursor: pointer; font-size: 14px;
+  }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  button.secondary { background: transparent; border: 1px solid var(--border); color: var(--text); }
+  button.danger { background: transparent; color: var(--danger); padding: 4px 8px; }
+  button.small { padding: 4px 10px; font-size: 12px; }
+  input[type=text], input[type=number], input[type=file], select, textarea {
+    background: var(--input); border: 1px solid var(--border); color: var(--text);
+    padding: 6px 8px; border-radius: 4px; font-size: 14px; width: 100%;
+    font-family: inherit;
+  }
+  input[type=number] { width: 80px; }
+  label { font-size: 13px; color: var(--muted); }
+  .item-row, .person-row {
+    display: flex; gap: 8px; align-items: center; padding: 8px 0;
+    border-bottom: 1px solid var(--border); flex-wrap: wrap;
+  }
+  .item-row input[type=text] { flex: 1; min-width: 100px; }
+  .chips { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 4px; width: 100%; }
+  .chip {
+    background: transparent; border: 1px solid var(--border); color: var(--muted);
+    padding: 3px 8px; border-radius: 12px; font-size: 12px; cursor: pointer; user-select: none;
+  }
+  .chip.on { background: var(--accent); color: white; border-color: var(--accent); }
+  #preview { max-width: 100%; margin-top: 8px; border-radius: 6px; display: none; cursor: zoom-in; }
+  #progress { color: var(--muted); font-size: 13px; margin-top: 6px; min-height: 18px; }
+  .tax-row { display: flex; gap: 12px; margin-bottom: 8px; align-items: center; }
+  .tax-row label { flex: 0 0 auto; }
+  .grand-total {
+    margin-top: 12px; padding-top: 12px; border-top: 2px solid var(--border);
+    font-weight: bold; font-size: 16px;
+  }
+  .amount { color: var(--accent); font-weight: 600; cursor: pointer; }
+  .amount:hover { text-decoration: underline; }
+  .amount.copied::after { content: " ✓"; color: #22c55e; }
+  .person-name { flex: 1; }
+  .person-total { font-weight: 600; font-size: 15px; }
+  .muted { color: var(--muted); font-size: 12px; }
+  .common-items { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+  #lightbox {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.9); z-index: 100;
+    display: none; align-items: center; justify-content: center; cursor: zoom-out;
+    padding: 20px;
+  }
+  #lightbox img { max-width: 100%; max-height: 100%; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <h1>Split the Bill</h1>
+  <div class="spacer"></div>
+  <select id="currency" title="Currency" style="width:auto; padding:4px 6px; font-size:12px;">
+    <option>MVR</option><option>USD</option><option>EUR</option><option>GBP</option>
+    <option>INR</option><option>SGD</option><option>MYR</option><option>AUD</option><option>JPY</option><option>LKR</option>
+  </select>
+  <button class="secondary" id="themeToggle" title="Toggle theme" style="padding:4px 8px; font-size:16px; line-height:1;">🌙</button>
+</div>
+
+<div class="meta">
+  <input type="text" id="restaurant" placeholder="Restaurant name">
+  <select id="mealType">
+    <option>Breakfast</option><option selected>Lunch</option><option>Tea</option><option>Dinner</option><option>Others</option>
+  </select>
+  <button class="secondary small" id="exportJson">Export JSON</button>
+  <button class="secondary small" id="importBtn">Import JSON</button>
+  <button class="secondary small" id="copyMd">Copy for WhatsApp</button>
+  <input type="file" id="importFile" accept=".json,application/json" style="display:none;">
+</div>
+
+<div class="grid">
+
+  <div class="panel">
+    <h2>1. Upload</h2>
+    <input type="file" id="file" accept="image/*">
+    <img id="preview" alt="Tap to enlarge">
+    <div style="margin-top:10px;">
+      <button id="scan" disabled>Scan bill</button>
+    </div>
+    <div id="progress"></div>
+    <div class="muted" style="margin-top:6px;">⚠️ OCR isn't perfect — expect to fix a few item names and prices by hand after scanning.</div>
+    <details style="margin-top:8px;">
+      <summary class="muted" style="cursor:pointer;">Raw OCR text</summary>
+      <textarea id="rawText" style="height:140px; margin-top:6px; font-family:monospace; font-size:12px;" placeholder="Scan a bill or paste text here, then click Re-parse"></textarea>
+      <button class="secondary small" id="reparse" style="margin-top:6px;">Re-parse text</button>
+    </details>
+
+    <h2 style="margin-top:20px;">Tax</h2>
+    <div class="tax-row">
+      <label>Service %</label>
+      <input type="number" id="service" value="10" step="0.1" min="0">
+    </div>
+    <div class="tax-row">
+      <label>GST %</label>
+      <input type="number" id="gst" value="8" step="0.1" min="0">
+    </div>
+    <div class="muted">Applied as: subtotal × (1+service) × (1+GST)</div>
+
+    <h2 style="margin-top:20px;">Shared by all</h2>
+    <div id="sharedAll" class="muted">No items shared by everyone yet. Tap "All" on an item.</div>
+  </div>
+
+  <div class="panel">
+    <h2>2. Items</h2>
+    <div id="items"></div>
+    <button class="secondary" id="addItem" style="margin-top:10px;">+ Add item</button>
+    <datalist id="foodSuggestions"></datalist>
+  </div>
+
+  <div class="panel">
+    <h2>3. People</h2>
+    <div id="people"></div>
+    <button class="secondary" id="addPerson" style="margin-top:10px;">+ Add person</button>
+    <div class="grand-total">
+      Grand total: <span class="amount" id="grand" data-copy="0">0.00 MVR</span>
+    </div>
+  </div>
+
+</div>
+
+<div id="lightbox"><img id="lightboxImg" alt=""></div>
+
+<script>
+const COMMON_ITEMS = ['Water', 'Water large', 'Nuts', 'Bread', 'Ice', 'Tissue', 'Rice', 'Sauce', 'Papadum'];
+const FOOD_SUGGESTIONS = [
+  // Common Maldivian/SG/Asian dishes
+  'Hainanese Chicken with Rice', 'Chicken fried rice', 'Nasi Goreng', 'Mie Goreng',
+  'Papaya Juice', 'Iced Mocha', 'Iced Latte', 'Bitter Lemon', 'Water large', 'Water', 'Coke', 'Sprite', 'Fanta',
+  'Reuben Sandwich', 'Club Sandwich', 'Chicken Burger', 'Beef Burger', 'Fish and Chips',
+  'Caesar Salad', 'Greek Salad', 'Tuna Salad',
+  'French Fries', 'Onion Rings', 'Garlic Bread', 'Bruschetta',
+  'Margherita Pizza', 'Pepperoni Pizza', 'Hawaiian Pizza',
+  'Butter Chicken', 'Chicken Tikka', 'Chicken Biryani', 'Mutton Biryani', 'Naan', 'Garlic Naan', 'Roti', 'Roshi',
+  'Mas Huni', 'Mas Riha', 'Kulhi Boakibaa', 'Bajiya', 'Gulha', 'Fihunu Mas', 'Garudhiya',
+  'Espresso', 'Cappuccino', 'Latte', 'Flat White', 'Americano', 'Hot Chocolate', 'Chai', 'Green Tea', 'Black Tea',
+  'Ice Cream', 'Brownie', 'Cheesecake', 'Tiramisu', 'Pancakes', 'Waffles',
+  'Service Charge', 'GST'
+];
+
+let items = [];
+let people = [];
+let nextId = 1;
+let previewUrl = '';
+
+const $ = s => document.querySelector(s);
+const $$ = s => document.querySelectorAll(s);
+const cur = () => $('#currency').value;
+const fmt = n => n.toFixed(2);
+const money = n => `${fmt(n)} ${cur()}`;
+
+function addPerson(name) {
+  const id = nextId++;
+  people.push({ id, name: name || `Person ${people.length}` });
+  render();
+}
+function addItem(name = '', price = 0, sharedBy = []) {
+  items.push({ id: nextId++, name, price, sharedBy });
+  render();
+}
+function removeItem(id) { items = items.filter(i => i.id !== id); render(); }
+function removePerson(id) {
+  people = people.filter(p => p.id !== id);
+  items.forEach(i => i.sharedBy = i.sharedBy.filter(pid => pid !== id));
+  render();
+}
+function toggleShare(itemId, personId) {
+  const item = items.find(i => i.id === itemId);
+  if (!item) return;
+  if (item.sharedBy.includes(personId)) item.sharedBy = item.sharedBy.filter(pid => pid !== personId);
+  else item.sharedBy.push(personId);
+  render();
+}
+
+function computeTotals() {
+  const service = parseFloat($('#service').value) || 0;
+  const gst = parseFloat($('#gst').value) || 0;
+  const mult = (1 + service / 100) * (1 + gst / 100);
+  const subs = Object.fromEntries(people.map(p => [p.id, 0]));
+  for (const item of items) {
+    if (item.sharedBy.length === 0) continue;
+    const share = item.price / item.sharedBy.length;
+    for (const pid of item.sharedBy) subs[pid] += share;
+  }
+  const perPerson = people.map(p => ({ ...p, subtotal: subs[p.id], total: subs[p.id] * mult }));
+  const unassignedSum = items.filter(i => i.sharedBy.length === 0).reduce((s, i) => s + i.price, 0);
+  const grand = perPerson.reduce((s, p) => s + p.total, 0) + unassignedSum * mult;
+  return { perPerson, grand, unassignedSum, mult };
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function render() {
+  const itemsEl = $('#items');
+  itemsEl.innerHTML = '';
+  for (const item of items) {
+    const row = document.createElement('div');
+    row.className = 'item-row';
+    row.innerHTML = `
+      <input type="text" list="foodSuggestions" value="${escapeHtml(item.name)}" data-id="${item.id}" data-field="name" placeholder="Item">
+      <input type="number" step="0.01" value="${item.price}" data-id="${item.id}" data-field="price" style="width:90px;">
+      <button class="danger" data-remove-item="${item.id}">×</button>
+      <div class="chips">
+        ${people.length > 0 ? `<span class="chip ${item.sharedBy.length === people.length && people.length > 0 ? 'on' : ''}" data-all="${item.id}" title="Split among everyone">All</span>` : ''}
+        ${people.map(p => `<span class="chip ${item.sharedBy.includes(p.id) ? 'on' : ''}" data-item="${item.id}" data-person="${p.id}">${escapeHtml(p.name)}</span>`).join('')}
+        ${people.length === 0 ? '<span class="muted">Add people first →</span>' : ''}
+      </div>
+    `;
+    itemsEl.appendChild(row);
+  }
+  renderPeople();
+  renderSharedAll();
+}
+
+function renderPeople() {
+  const { perPerson, grand, unassignedSum, mult } = computeTotals();
+  const peopleEl = $('#people');
+  const focused = document.activeElement;
+  const focusedPid = focused && focused.dataset && focused.dataset.pid;
+  peopleEl.innerHTML = '';
+  for (const p of perPerson) {
+    const row = document.createElement('div');
+    row.className = 'person-row';
+    row.innerHTML = `
+      <input type="text" value="${escapeHtml(p.name)}" data-pid="${p.id}" class="person-name">
+      <div style="display:flex; flex-direction:column; align-items:flex-end;">
+        <span class="person-total amount" data-copy="${p.total.toFixed(2)}">${money(p.total)}</span>
+        <span class="muted">sub ${money(p.subtotal)}</span>
+      </div>
+      <button class="danger" data-remove-person="${p.id}">×</button>
+    `;
+    peopleEl.appendChild(row);
+  }
+  if (unassignedSum > 0) {
+    const row = document.createElement('div');
+    row.className = 'person-row';
+    const amt = unassignedSum * mult;
+    row.innerHTML = `<span class="muted">Unassigned items</span><span class="amount" data-copy="${amt.toFixed(2)}">${money(amt)}</span>`;
+    peopleEl.appendChild(row);
+  }
+  const gEl = $('#grand');
+  gEl.textContent = money(grand);
+  gEl.dataset.copy = grand.toFixed(2);
+  if (focusedPid) {
+    const el = peopleEl.querySelector(`input[data-pid="${focusedPid}"]`);
+    if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
+  }
+}
+
+// Input events
+document.addEventListener('input', e => {
+  const t = e.target;
+  if (t.dataset.field) {
+    const item = items.find(i => i.id === +t.dataset.id);
+    if (!item) return;
+    if (t.dataset.field === 'price') item.price = parseFloat(t.value) || 0;
+    else item[t.dataset.field] = t.value;
+    renderPeople();
+  } else if (t.dataset.pid) {
+    const p = people.find(x => x.id === +t.dataset.pid);
+    if (p) {
+      p.name = t.value;
+      $$(`.chip[data-person="${p.id}"]`).forEach(c => c.textContent = p.name);
+    }
+  } else if (t.id === 'service' || t.id === 'gst' || t.id === 'currency') {
+    renderPeople();
+  }
+});
+
+// Click events
+document.addEventListener('click', e => {
+  const t = e.target;
+  if (t.dataset.removeItem) removeItem(+t.dataset.removeItem);
+  else if (t.dataset.removePerson) removePerson(+t.dataset.removePerson);
+  else if (t.dataset.all) {
+    const item = items.find(i => i.id === +t.dataset.all);
+    item.sharedBy = item.sharedBy.length === people.length ? [] : people.map(p => p.id);
+    render();
+  }
+  else if (t.dataset.item && t.dataset.person) toggleShare(+t.dataset.item, +t.dataset.person);
+  else if (t.classList.contains('amount') && t.dataset.copy) {
+    navigator.clipboard.writeText(t.dataset.copy).then(() => {
+      t.classList.add('copied');
+      setTimeout(() => t.classList.remove('copied'), 1200);
+    });
+  }
+});
+
+$('#addPerson').onclick = () => addPerson();
+$('#addItem').onclick = () => addItem();
+$('#reparse').onclick = () => {
+  parseOcrText($('#rawText').value);
+  $('#progress').textContent = `Re-parsed: ${items.length} items.`;
+};
+
+// Theme
+function applyTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  $('#themeToggle').textContent = theme === 'dark' ? '☀️' : '🌙';
+  localStorage.setItem('theme', theme);
+}
+$('#themeToggle').onclick = () => applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
+applyTheme(localStorage.getItem('theme') || 'dark');
+
+// Currency persist
+$('#currency').value = localStorage.getItem('currency') || 'MVR';
+$('#currency').addEventListener('change', () => localStorage.setItem('currency', $('#currency').value));
+
+// Image upload + lightbox
+$('#file').onchange = e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  if (previewUrl) URL.revokeObjectURL(previewUrl);
+  previewUrl = URL.createObjectURL(f);
+  const img = $('#preview');
+  img.src = previewUrl;
+  img.style.display = 'block';
+  $('#scan').disabled = false;
+};
+$('#preview').onclick = () => {
+  if (!previewUrl) return;
+  $('#lightboxImg').src = previewUrl;
+  $('#lightbox').style.display = 'flex';
+};
+$('#lightbox').onclick = () => $('#lightbox').style.display = 'none';
+
+// OCR
+$('#scan').onclick = async () => {
+  const f = $('#file').files[0];
+  if (!f) return;
+  $('#scan').disabled = true;
+  const prog = $('#progress');
+  prog.textContent = 'Loading OCR…';
+  try {
+    const { data } = await Tesseract.recognize(f, 'eng', {
+      logger: m => {
+        if (m.status && m.progress != null) prog.textContent = `${m.status} ${Math.round(m.progress * 100)}%`;
+      }
+    });
+    $('#rawText').value = data.text;
+    parseOcrText(data.text);
+    prog.textContent = `Found ${items.length} items. Click item names to fix typos (suggestions appear).`;
+  } catch (err) {
+    prog.textContent = 'Error: ' + err.message;
+  } finally {
+    $('#scan').disabled = false;
+  }
+};
+
+function extractRestaurantName(rawLines) {
+  const stopRe = /^(tax invoice|invoice|inv#|table\b|dine|receipt|order|bill|cashier|number of|covers|phone|gst number|date|time)/i;
+  for (const line of rawLines.slice(0, 6)) {
+    if (stopRe.test(line)) break;
+    // Strip trailing non-letter garbage and leading non-letter garbage
+    const cleaned = line.replace(/[^A-Za-z0-9&'.\- ]+$/g, '').replace(/^[^A-Za-z0-9]+/, '').replace(/\s+/g, ' ').trim();
+    // Require some letters and reasonable length
+    if (/[A-Za-z]{3,}/.test(cleaned) && cleaned.length >= 4 && cleaned.length <= 40) {
+      return cleaned;
+    }
+  }
+  return '';
+}
+
+function parseOcrText(text) {
+  const rawLines = text.split('\n').map(l => l.replace(/\s+/g, ' ').trim()).filter(Boolean);
+  const rest = extractRestaurantName(rawLines);
+  if (rest && !$('#restaurant').value.trim()) $('#restaurant').value = rest;
+  const priceTokenRe = /(\d{1,3}(?:,\d{3})+\.\d{2}|\d+\.\d{2}|\d+,\d{2})/g;
+  const skipRe = /^(total\b|balance|amount due|cash|change|visa|master|card\b|due\b|paid|tender|rounding|invoice|inv#|table\b|number of|covers|phone|dine|tax invoice|thank|gst number)/i;
+  const svcRe = /(service|^s\s*\/?\s*c\b|^svc\b)/i;
+  const gstRe = /^(gst|tax|vat)\b/i;
+  const subtotalRe = /^sub[\s-]?total/i;
+  const qtyRe = /^(\d+)\s+(.*)$/;
+  let subtotal = null, svcAmt = null, gstAmt = null;
+  const newItems = [];
+  const parsePrice = s => s.includes(',') && s.includes('.')
+    ? parseFloat(s.replace(/,/g, '')) : parseFloat(s.replace(',', '.'));
+
+  for (const line of rawLines) {
+    const matches = [...line.matchAll(priceTokenRe)];
+    if (matches.length === 0) continue;
+    const lastMatch = matches[matches.length - 1];
+    const price = parsePrice(lastMatch[1]);
+    if (isNaN(price) || price <= 0) continue;
+    let namePart = line.slice(0, lastMatch.index).trim();
+    if (subtotalRe.test(namePart) || subtotalRe.test(line)) { subtotal = price; continue; }
+    if (svcRe.test(namePart) || svcRe.test(line)) { svcAmt = price; continue; }
+    if (gstRe.test(namePart) || gstRe.test(line)) { gstAmt = price; continue; }
+    if (skipRe.test(namePart) || skipRe.test(line)) continue;
+    let qty = 1;
+    const qm = namePart.match(qtyRe);
+    if (qm) { qty = parseInt(qm[1], 10) || 1; namePart = qm[2]; }
+    namePart = namePart.replace(/^x\s+/i, '').replace(/\s+x\s*$/i, '').trim();
+    const name = namePart.replace(/\s+/g, ' ').trim();
+    if (!name || name.length < 2) continue;
+    if (/^\+?\d[\d\s-]{6,}$/.test(name)) continue;
+    if (qty > 20) qty = 1;
+    const unit = price / qty;
+    for (let i = 0; i < qty; i++) newItems.push({ id: nextId++, name, price: +unit.toFixed(2), sharedBy: [] });
+  }
+  items = newItems;
+  if (subtotal && svcAmt) $('#service').value = ((svcAmt / subtotal) * 100).toFixed(1);
+  if (subtotal && gstAmt) $('#gst').value = ((gstAmt / (subtotal + (svcAmt || 0))) * 100).toFixed(1);
+  render();
+}
+
+function renderSharedAll() {
+  const el = $('#sharedAll');
+  if (people.length === 0) { el.innerHTML = '<span class="muted">Add people first.</span>'; return; }
+  const shared = items.filter(i => i.sharedBy.length === people.length);
+  if (shared.length === 0) { el.innerHTML = '<span class="muted">No items shared by everyone yet. Tap "All" on an item.</span>'; return; }
+  el.innerHTML = shared.map(i => `<div style="display:flex; justify-content:space-between; padding:3px 0;"><span>${escapeHtml(i.name || '(unnamed)')}</span><span class="muted">${fmt(i.price)} ${cur()}</span></div>`).join('');
+}
+
+// Food suggestions
+$('#foodSuggestions').innerHTML = FOOD_SUGGESTIONS.map(f => `<option value="${escapeHtml(f)}">`).join('');
+
+// Export / Import JSON
+$('#exportJson').onclick = () => {
+  const data = {
+    restaurant: $('#restaurant').value,
+    mealType: $('#mealType').value,
+    currency: cur(),
+    service: parseFloat($('#service').value) || 0,
+    gst: parseFloat($('#gst').value) || 0,
+    people,
+    items,
+  };
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  const stamp = new Date().toISOString().slice(0, 10);
+  a.download = `bill-${(data.restaurant || 'untitled').replace(/\W+/g, '-')}-${stamp}.json`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+};
+$('#importBtn').onclick = () => $('#importFile').click();
+$('#importFile').onchange = async e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  try {
+    const data = JSON.parse(await f.text());
+    $('#restaurant').value = data.restaurant || '';
+    $('#mealType').value = data.mealType || 'Lunch';
+    if (data.currency) $('#currency').value = data.currency;
+    if (data.service != null) $('#service').value = data.service;
+    if (data.gst != null) $('#gst').value = data.gst;
+    people = data.people || [];
+    items = data.items || [];
+    nextId = Math.max(1, ...people.map(p => p.id), ...items.map(i => i.id)) + 1;
+    render();
+  } catch (err) {
+    alert('Invalid JSON: ' + err.message);
+  }
+  e.target.value = '';
+};
+
+// Copy markdown
+$('#copyMd').onclick = () => {
+  const { perPerson, grand, unassignedSum, mult } = computeTotals();
+  const meal = $('#mealType').value;
+  const rest = $('#restaurant').value.trim();
+  const header = rest ? `${meal} — ${rest}` : meal;
+  const lines = [`*${header}*`, ''];
+  for (const p of perPerson) lines.push(`${p.name}: ${fmt(p.total)} ${cur()}`);
+  if (unassignedSum > 0) lines.push(`Unassigned: ${fmt(unassignedSum * mult)} ${cur()}`);
+  lines.push('', `_Total: ${fmt(grand)} ${cur()}_`);
+  const md = lines.join('\n');
+  navigator.clipboard.writeText(md).then(() => {
+    const btn = $('#copyMd');
+    const orig = btn.textContent;
+    btn.textContent = 'Copied ✓';
+    setTimeout(() => btn.textContent = orig, 1500);
+  });
+};
+
+// Seed
+addPerson('Me');
+addPerson('Person 1');
+addPerson('Person 2');
+</script>
+</body>
+</html>
