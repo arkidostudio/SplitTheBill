@@ -474,7 +474,18 @@ function extractRestaurantName(lines) {
 }
 
 function parseOcrText(text) {
-  const rawLines = text.split('\n').map(l => l.replace(/\s+/g, ' ').trim()).filter(Boolean);
+  const rawLines = text.split('\n').map(l => {
+    let s = l.replace(/\s+/g, ' ').trim();
+    // OCR often loses the decimal point in prices like "18.00" → "1800" or "x 1800".
+    // Restore it when a bare 3-5 digit number sits at line end (with optional trailing letter garbage).
+    if (!/\d+[.,]\d{2}/.test(s)) {
+      s = s.replace(/(^|\s)(\d{3,5})(\s*[A-Za-z]{0,4})\s*$/, (_, pre, digits, tail) => {
+        const cents = parseInt(digits, 10);
+        return `${pre}${(cents / 100).toFixed(2)}${tail}`;
+      });
+    }
+    return s;
+  }).filter(Boolean);
   const rest = extractRestaurantName(rawLines);
   if (rest && !$('#restaurant').value.trim()) $('#restaurant').value = rest;
 
