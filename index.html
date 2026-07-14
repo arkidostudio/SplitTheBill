@@ -192,6 +192,11 @@ const FOOD_SUGGESTIONS = [
   'Margherita Pizza', 'Pepperoni Pizza', 'Hawaiian Pizza',
   'Butter Chicken', 'Chicken Tikka', 'Chicken Biryani', 'Mutton Biryani', 'Naan', 'Garlic Naan', 'Roti', 'Roshi',
   'Mas Huni', 'Mas Riha', 'Kulhi Boakibaa', 'Bajiya', 'Gulha', 'Fihunu Mas', 'Garudhiya',
+  'Rihaakuru', 'Kavaabu', 'Hedhikaa', 'Theluli Mas', 'Boakibaa', 'Kandu Kukulhu', 'Kukulhu Riha',
+  'Ala Riha', 'Bodi Riha', 'Aluvi Riha', 'Bis Keemiya', 'Fried Roshi', 'Mas Roshi', 'Fried Mas Roshi',
+  'Kirumas', 'Roshi Curry', 'Kandu Kavaabu', 'Handulu Bondibaiy', 'Foni Boakibaa', 'Foni Roshi',
+  'Sai', 'Kalhu Sai', 'Kiru Sai', 'Coconut Water', 'Lime Juice', 'Fresh Lime', 'Fanta Orange',
+  'Chicken Kottu', 'Beef Kottu', 'Cheese Kottu', 'Chicken Submarine', 'Beef Submarine',
   'Espresso', 'Cappuccino', 'Latte', 'Flat White', 'Americano', 'Hot Chocolate', 'Chai', 'Green Tea', 'Black Tea',
   'Ice Cream', 'Brownie', 'Cheesecake', 'Tiramisu', 'Pancakes', 'Waffles',
 ];
@@ -491,10 +496,15 @@ function parseOcrText(text) {
 
   const priceRe = /(\d{1,3}(?:,\d{3})+\.\d{2}|\d+\.\d{2}|\d+,\d{2})/g;
   const skipRe = /^(total\b|balance|amount due|cash|change|visa|master|card\b|due\b|paid|tender|rounding|invoice|inv#|table\b|number of|covers|phone|dine|tax invoice|thank|gst number)/i;
-  const fuzzySkipWords = ['total', 'subtotal', 'balance', 'invoice', 'change', 'tender', 'cashier', 'receipt', 'payment'];
+  const containsSkipRe = /\b(total|grand total|subtotal|amount|balance|change|tender|rounding|payment|paid|cashier|due)\b/i;
+  const currencyRe = /\b(MVR|USD|EUR|GBP|INR|SGD|MYR|AUD|JPY|LKR|Rs|USD\$|\$)\b/i;
+  const fuzzySkipWords = ['total', 'subtotal', 'balance', 'invoice', 'change', 'tender', 'cashier', 'receipt', 'payment', 'grand'];
   const isFuzzyHeader = line => {
-    const w = (line.split(/\s+/)[0] || '').toLowerCase().replace(/[^a-z]/g, '');
-    return w.length >= 4 && fuzzySkipWords.some(k => sim(w, k) >= 0.7);
+    const words = line.split(/\s+/).slice(0, 2);
+    return words.some(word => {
+      const w = word.toLowerCase().replace(/[^a-z]/g, '');
+      return w.length >= 4 && fuzzySkipWords.some(k => sim(w, k) >= 0.7);
+    });
   };
   const svcRe = /(service|^s\s*\/?\s*c\b|^svc\b)/i;
   const gstRe = /^(gst|tax|vat)\b/i;
@@ -504,7 +514,6 @@ function parseOcrText(text) {
     ? parseFloat(s.replace(/,/g, ''))
     : parseFloat(s.replace(',', '.'));
 
-  let subtotal = null, svcAmt = null, gstAmt = null;
   const newItems = [];
 
   for (const line of rawLines) {
@@ -514,10 +523,12 @@ function parseOcrText(text) {
     const price = parsePrice(last[1]);
     if (isNaN(price) || price <= 0) continue;
     let namePart = line.slice(0, last.index).trim();
-    if (subtotalRe.test(namePart) || subtotalRe.test(line)) { subtotal = price; continue; }
-    if (svcRe.test(namePart) || svcRe.test(line)) { svcAmt = price; continue; }
-    if (gstRe.test(namePart) || gstRe.test(line)) { gstAmt = price; continue; }
+    if (subtotalRe.test(namePart) || subtotalRe.test(line)) continue;
+    if (svcRe.test(namePart) || svcRe.test(line)) continue;
+    if (gstRe.test(namePart) || gstRe.test(line)) continue;
     if (skipRe.test(namePart) || skipRe.test(line)) continue;
+    if (containsSkipRe.test(line)) continue;
+    if (currencyRe.test(line)) continue;
     if (isFuzzyHeader(namePart) || isFuzzyHeader(line)) continue;
 
     let qty = 1;
@@ -530,14 +541,12 @@ function parseOcrText(text) {
 
     const unit = price / qty;
     const best = bestMatch(name);
-    const fixed = best && best.score >= 0.7 ? best.match : name;
+    const fixed = best && best.score >= 0.55 ? best.match : name;
     for (let i = 0; i < qty; i++) {
       newItems.push({ id: nextId++, name: fixed, original: name !== fixed ? name : null, price: +unit.toFixed(2), sharedBy: [] });
     }
   }
   items = newItems;
-  if (subtotal && svcAmt) $('#service').value = ((svcAmt / subtotal) * 100).toFixed(1);
-  if (subtotal && gstAmt) $('#gst').value = ((gstAmt / (subtotal + (svcAmt || 0))) * 100).toFixed(1);
   render();
 }
 
