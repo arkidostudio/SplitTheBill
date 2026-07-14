@@ -46,28 +46,30 @@
   .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px; }
   button {
     background: var(--accent); color: white; border: none;
-    padding: 8px 14px; border-radius: 6px; cursor: pointer; font-size: 14px;
+    padding: 10px 14px; border-radius: 6px; cursor: pointer; font-size: 14px;
+    min-height: 40px;
   }
   button:disabled { opacity: 0.5; cursor: not-allowed; }
   button.secondary { background: transparent; border: 1px solid var(--border); color: var(--text); }
-  button.danger { background: transparent; color: var(--danger); padding: 4px 8px; }
-  button.small { padding: 4px 10px; font-size: 12px; }
+  button.danger { background: transparent; color: var(--danger); padding: 4px 10px; min-height: 32px; font-size: 18px; }
+  button.small { padding: 6px 10px; font-size: 13px; min-height: 34px; }
   input[type=text], input[type=number], input[type=file], select, textarea {
     background: var(--input); border: 1px solid var(--border); color: var(--text);
-    padding: 6px 8px; border-radius: 4px; font-size: 14px; width: 100%;
+    padding: 8px 10px; border-radius: 4px; font-size: 16px; width: 100%;
     font-family: inherit;
   }
-  input[type=number] { width: 80px; }
+  input[type=number] { width: 90px; }
   label { font-size: 13px; color: var(--muted); }
   .item-row, .person-row {
-    display: flex; gap: 8px; align-items: center; padding: 8px 0;
+    display: flex; gap: 8px; align-items: center; padding: 10px 0;
     border-bottom: 1px solid var(--border); flex-wrap: wrap;
   }
-  .item-row input[type=text] { flex: 1; min-width: 100px; }
-  .chips { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 4px; width: 100%; }
+  .item-row input[type=text] { flex: 1; min-width: 120px; }
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; width: 100%; }
   .chip {
     background: transparent; border: 1px solid var(--border); color: var(--muted);
-    padding: 3px 8px; border-radius: 12px; font-size: 12px; cursor: pointer; user-select: none;
+    padding: 6px 12px; border-radius: 14px; font-size: 13px; cursor: pointer; user-select: none;
+    -webkit-tap-highlight-color: transparent;
   }
   .chip.on { background: var(--accent); color: white; border-color: var(--accent); }
   #preview { max-width: 100%; margin-top: 8px; border-radius: 6px; display: none; cursor: zoom-in; }
@@ -91,6 +93,14 @@
     padding: 20px;
   }
   #lightbox img { max-width: 100%; max-height: 100%; }
+  @media (max-width: 600px) {
+    body { padding: 10px; }
+    h1 { font-size: 18px; }
+    h2 { font-size: 13px; margin-bottom: 8px; }
+    .panel { padding: 12px; }
+    .meta input, .meta select { min-width: 100%; }
+    .meta button { flex: 1; min-width: 30%; }
+  }
 </style>
 </head>
 <body>
@@ -120,7 +130,7 @@
 
   <div class="panel">
     <h2>1. Upload</h2>
-    <input type="file" id="file" accept="image/*">
+    <input type="file" id="file" accept="image/*" capture="environment">
     <img id="preview" alt="Tap to enlarge">
     <div style="margin-top:10px;">
       <button id="scan" disabled>Scan bill</button>
