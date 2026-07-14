@@ -200,6 +200,44 @@ let people = [];
 let nextId = 1;
 let previewUrl = '';
 
+function lev(a, b) {
+  a = a.toLowerCase(); b = b.toLowerCase();
+  const m = a.length, n = b.length;
+  if (!m) return n; if (!n) return m;
+  let prev = new Array(n + 1);
+  for (let j = 0; j <= n; j++) prev[j] = j;
+  for (let i = 1; i <= m; i++) {
+    const curr = [i];
+    for (let j = 1; j <= n; j++) {
+      curr[j] = a[i-1] === b[j-1] ? prev[j-1] : 1 + Math.min(prev[j], curr[j-1], prev[j-1]);
+    }
+    prev = curr;
+  }
+  return prev[n];
+}
+function sim(a, b) { return 1 - lev(a, b) / Math.max(a.length, b.length, 1); }
+function tokenScore(parsed, suggestion) {
+  const pw = parsed.toLowerCase().split(/\s+/).filter(w => w.length > 1);
+  const sw = suggestion.toLowerCase().split(/\s+/).filter(w => w.length > 1);
+  if (!pw.length || !sw.length) return 0;
+  let total = 0;
+  for (const w of pw) {
+    let best = 0;
+    for (const s of sw) best = Math.max(best, sim(w, s));
+    total += best;
+  }
+  return total / pw.length;
+}
+function bestMatch(name, pool) {
+  if (!name || name.length < 3) return null;
+  let best = null, bestScore = 0;
+  for (const c of pool) {
+    const score = Math.max(sim(name.toLowerCase(), c.toLowerCase()), tokenScore(name, c));
+    if (score > bestScore) { bestScore = score; best = c; }
+  }
+  return { match: best, score: bestScore };
+}
+
 const $ = s => document.querySelector(s);
 const $$ = s => document.querySelectorAll(s);
 const cur = () => $('#currency').value;
@@ -256,7 +294,7 @@ function render() {
     const row = document.createElement('div');
     row.className = 'item-row';
     row.innerHTML = `
-      <input type="text" list="foodSuggestions" value="${escapeHtml(item.name)}" data-id="${item.id}" data-field="name" placeholder="Item">
+      <input type="text" list="foodSuggestions" value="${escapeHtml(item.name)}" data-id="${item.id}" data-field="name" placeholder="Item" ${item.original ? `title="Auto-corrected from: ${escapeHtml(item.original)}" style="border-left:3px solid var(--accent);"` : ''}>
       <input type="number" step="0.01" value="${item.price}" data-id="${item.id}" data-field="price" style="width:90px;">
       <button class="danger" data-remove-item="${item.id}">×</button>
       <div class="chips">
@@ -455,7 +493,10 @@ function parseOcrText(text) {
     if (/^\+?\d[\d\s-]{6,}$/.test(name)) continue;
     if (qty > 20) qty = 1;
     const unit = price / qty;
-    for (let i = 0; i < qty; i++) newItems.push({ id: nextId++, name, price: +unit.toFixed(2), sharedBy: [] });
+    const pool = [...new Set([...FOOD_SUGGESTIONS, ...COMMON_ITEMS])];
+    const best = bestMatch(name, pool);
+    const fixed = best && best.score >= 0.7 ? best.match : name;
+    for (let i = 0; i < qty; i++) newItems.push({ id: nextId++, name: fixed, original: name !== fixed ? name : null, price: +unit.toFixed(2), sharedBy: [] });
   }
   items = newItems;
   if (subtotal && svcAmt) $('#service').value = ((svcAmt / subtotal) * 100).toFixed(1);
