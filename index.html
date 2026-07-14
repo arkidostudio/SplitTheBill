@@ -72,6 +72,8 @@
     -webkit-tap-highlight-color: transparent;
   }
   .chip.on { background: var(--accent); color: white; border-color: var(--accent); }
+  .suggest { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; width: 100%; }
+  .suggest.hidden { display: none; }
   #preview { max-width: 100%; margin-top: 8px; border-radius: 6px; display: none; cursor: zoom-in; }
   #progress { color: var(--muted); font-size: 13px; margin-top: 6px; min-height: 18px; }
   .tax-row { display: flex; gap: 12px; margin-bottom: 8px; align-items: center; }
@@ -86,12 +88,13 @@
   .person-name { flex: 1; }
   .person-total { font-weight: 600; font-size: 15px; }
   .muted { color: var(--muted); font-size: 12px; }
-  .common-items { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+  .fixed-name { border-left: 3px solid var(--accent) !important; }
   #lightbox {
     position: fixed; inset: 0; background: rgba(0,0,0,0.9); z-index: 100;
     display: none; align-items: center; justify-content: center; cursor: zoom-out;
     padding: 20px;
   }
+  #lightbox.open { display: flex; }
   #lightbox img { max-width: 100%; max-height: 100%; }
   @media (max-width: 600px) {
     body { padding: 10px; }
@@ -136,7 +139,7 @@
       <button id="scan" disabled>Scan bill</button>
     </div>
     <div id="progress"></div>
-    <div class="muted" style="margin-top:6px;">⚠️ OCR isn't perfect — expect to fix a few item names and prices by hand after scanning.</div>
+    <div class="muted" style="margin-top:6px;">OCR isn't perfect — expect to fix a few item names and prices by hand after scanning.</div>
     <details style="margin-top:8px;">
       <summary class="muted" style="cursor:pointer;">Raw OCR text</summary>
       <textarea id="rawText" style="height:140px; margin-top:6px; font-family:monospace; font-size:12px;" placeholder="Scan a bill or paste text here, then click Re-parse"></textarea>
@@ -181,7 +184,6 @@
 <script>
 const COMMON_ITEMS = ['Water', 'Water large', 'Nuts', 'Bread', 'Ice', 'Tissue', 'Rice', 'Sauce', 'Papadum'];
 const FOOD_SUGGESTIONS = [
-  // Common Maldivian/SG/Asian dishes
   'Hainanese Chicken with Rice', 'Chicken fried rice', 'Nasi Goreng', 'Mie Goreng',
   'Papaya Juice', 'Iced Mocha', 'Iced Latte', 'Bitter Lemon', 'Water large', 'Water', 'Coke', 'Sprite', 'Fanta',
   'Reuben Sandwich', 'Club Sandwich', 'Chicken Burger', 'Beef Burger', 'Fish and Chips',
@@ -192,20 +194,25 @@ const FOOD_SUGGESTIONS = [
   'Mas Huni', 'Mas Riha', 'Kulhi Boakibaa', 'Bajiya', 'Gulha', 'Fihunu Mas', 'Garudhiya',
   'Espresso', 'Cappuccino', 'Latte', 'Flat White', 'Americano', 'Hot Chocolate', 'Chai', 'Green Tea', 'Black Tea',
   'Ice Cream', 'Brownie', 'Cheesecake', 'Tiramisu', 'Pancakes', 'Waffles',
-  'Service Charge', 'GST'
 ];
+const POOL = [...new Set([...FOOD_SUGGESTIONS, ...COMMON_ITEMS])];
 
 let items = [];
 let people = [];
 let nextId = 1;
 let previewUrl = '';
 
+const $ = s => document.querySelector(s);
+const cur = () => $('#currency').value;
+const fmt = n => n.toFixed(2);
+const money = n => `${fmt(n)} ${cur()}`;
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
 function lev(a, b) {
   a = a.toLowerCase(); b = b.toLowerCase();
   const m = a.length, n = b.length;
   if (!m) return n; if (!n) return m;
-  let prev = new Array(n + 1);
-  for (let j = 0; j <= n; j++) prev[j] = j;
+  let prev = Array.from({length: n + 1}, (_, j) => j);
   for (let i = 1; i <= m; i++) {
     const curr = [i];
     for (let j = 1; j <= n; j++) {
@@ -215,38 +222,28 @@ function lev(a, b) {
   }
   return prev[n];
 }
-function sim(a, b) { return 1 - lev(a, b) / Math.max(a.length, b.length, 1); }
+const sim = (a, b) => 1 - lev(a, b) / Math.max(a.length, b.length, 1);
+
 function tokenScore(parsed, suggestion) {
   const pw = parsed.toLowerCase().split(/\s+/).filter(w => w.length > 1);
   const sw = suggestion.toLowerCase().split(/\s+/).filter(w => w.length > 1);
   if (!pw.length || !sw.length) return 0;
-  let total = 0;
-  for (const w of pw) {
-    let best = 0;
-    for (const s of sw) best = Math.max(best, sim(w, s));
-    total += best;
-  }
-  return total / pw.length;
+  return pw.reduce((sum, w) => sum + Math.max(0, ...sw.map(s => sim(w, s))), 0) / pw.length;
 }
-function bestMatch(name, pool) {
+const score = (name, candidate) => Math.max(sim(name.toLowerCase(), candidate.toLowerCase()), tokenScore(name, candidate));
+
+function bestMatch(name) {
   if (!name || name.length < 3) return null;
   let best = null, bestScore = 0;
-  for (const c of pool) {
-    const score = Math.max(sim(name.toLowerCase(), c.toLowerCase()), tokenScore(name, c));
-    if (score > bestScore) { bestScore = score; best = c; }
+  for (const c of POOL) {
+    const s = score(name, c);
+    if (s > bestScore) { bestScore = s; best = c; }
   }
   return { match: best, score: bestScore };
 }
 
-const $ = s => document.querySelector(s);
-const $$ = s => document.querySelectorAll(s);
-const cur = () => $('#currency').value;
-const fmt = n => n.toFixed(2);
-const money = n => `${fmt(n)} ${cur()}`;
-
 function addPerson(name) {
-  const id = nextId++;
-  people.push({ id, name: name || `Person ${people.length}` });
+  people.push({ id: nextId++, name: name || `Person ${people.length}` });
   render();
 }
 function addItem(name = '', price = 0, sharedBy = []) {
@@ -262,8 +259,9 @@ function removePerson(id) {
 function toggleShare(itemId, personId) {
   const item = items.find(i => i.id === itemId);
   if (!item) return;
-  if (item.sharedBy.includes(personId)) item.sharedBy = item.sharedBy.filter(pid => pid !== personId);
-  else item.sharedBy.push(personId);
+  item.sharedBy = item.sharedBy.includes(personId)
+    ? item.sharedBy.filter(pid => pid !== personId)
+    : [...item.sharedBy, personId];
   render();
 }
 
@@ -273,39 +271,31 @@ function computeTotals() {
   const mult = (1 + service / 100) * (1 + gst / 100);
   const subs = Object.fromEntries(people.map(p => [p.id, 0]));
   for (const item of items) {
-    if (item.sharedBy.length === 0) continue;
+    if (!item.sharedBy.length) continue;
     const share = item.price / item.sharedBy.length;
     for (const pid of item.sharedBy) subs[pid] += share;
   }
   const perPerson = people.map(p => ({ ...p, subtotal: subs[p.id], total: subs[p.id] * mult }));
-  const unassignedSum = items.filter(i => i.sharedBy.length === 0).reduce((s, i) => s + i.price, 0);
+  const unassignedSum = items.filter(i => !i.sharedBy.length).reduce((s, i) => s + i.price, 0);
   const grand = perPerson.reduce((s, p) => s + p.total, 0) + unassignedSum * mult;
   return { perPerson, grand, unassignedSum, mult };
 }
 
-function escapeHtml(s) {
-  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-}
-
 function render() {
   const itemsEl = $('#items');
-  itemsEl.innerHTML = '';
-  for (const item of items) {
-    const row = document.createElement('div');
-    row.className = 'item-row';
-    row.innerHTML = `
-      <input type="text" list="foodSuggestions" value="${escapeHtml(item.name)}" data-id="${item.id}" data-field="name" placeholder="Item" ${item.original ? `title="Auto-corrected from: ${escapeHtml(item.original)}" style="border-left:3px solid var(--accent);"` : ''}>
+  itemsEl.innerHTML = items.map(item => `
+    <div class="item-row">
+      <input type="text" list="foodSuggestions" value="${esc(item.name)}" data-id="${item.id}" data-field="name" placeholder="Item"${item.original ? ` title="Auto-corrected from: ${esc(item.original)}" class="fixed-name"` : ''}>
       <input type="number" step="0.01" value="${item.price}" data-id="${item.id}" data-field="price" style="width:90px;">
       <button class="danger" data-remove-item="${item.id}">×</button>
       <div class="chips">
-        ${people.length > 0 ? `<span class="chip ${item.sharedBy.length === people.length && people.length > 0 ? 'on' : ''}" data-all="${item.id}" title="Split among everyone">All</span>` : ''}
-        ${people.map(p => `<span class="chip ${item.sharedBy.includes(p.id) ? 'on' : ''}" data-item="${item.id}" data-person="${p.id}">${escapeHtml(p.name)}</span>`).join('')}
-        ${people.length === 0 ? '<span class="muted">Add people first →</span>' : ''}
+        ${people.length ? `<span class="chip ${item.sharedBy.length === people.length ? 'on' : ''}" data-all="${item.id}" title="Split among everyone">All</span>` : ''}
+        ${people.map(p => `<span class="chip ${item.sharedBy.includes(p.id) ? 'on' : ''}" data-item="${item.id}" data-person="${p.id}">${esc(p.name)}</span>`).join('')}
+        ${!people.length ? '<span class="muted">Add people first →</span>' : ''}
       </div>
-      <div class="suggest" data-suggest-for="${item.id}" style="width:100%; display:none;"></div>
-    `;
-    itemsEl.appendChild(row);
-  }
+      <div class="suggest hidden" data-suggest-for="${item.id}"></div>
+    </div>
+  `).join('');
   renderPeople();
   renderSharedAll();
 }
@@ -314,27 +304,20 @@ function renderPeople() {
   const { perPerson, grand, unassignedSum, mult } = computeTotals();
   const peopleEl = $('#people');
   const focused = document.activeElement;
-  const focusedPid = focused && focused.dataset && focused.dataset.pid;
-  peopleEl.innerHTML = '';
-  for (const p of perPerson) {
-    const row = document.createElement('div');
-    row.className = 'person-row';
-    row.innerHTML = `
-      <input type="text" value="${escapeHtml(p.name)}" data-pid="${p.id}" class="person-name">
+  const focusedPid = focused?.dataset?.pid;
+  peopleEl.innerHTML = perPerson.map(p => `
+    <div class="person-row">
+      <input type="text" value="${esc(p.name)}" data-pid="${p.id}" class="person-name">
       <div style="display:flex; flex-direction:column; align-items:flex-end;">
         <span class="person-total amount" data-copy="${p.total.toFixed(2)}">${money(p.total)}</span>
         <span class="muted">sub ${money(p.subtotal)}</span>
       </div>
       <button class="danger" data-remove-person="${p.id}">×</button>
-    `;
-    peopleEl.appendChild(row);
-  }
+    </div>
+  `).join('');
   if (unassignedSum > 0) {
-    const row = document.createElement('div');
-    row.className = 'person-row';
     const amt = unassignedSum * mult;
-    row.innerHTML = `<span class="muted">Unassigned items</span><span class="amount" data-copy="${amt.toFixed(2)}">${money(amt)}</span>`;
-    peopleEl.appendChild(row);
+    peopleEl.insertAdjacentHTML('beforeend', `<div class="person-row"><span class="muted">Unassigned items</span><span class="amount" data-copy="${amt.toFixed(2)}">${money(amt)}</span></div>`);
   }
   const gEl = $('#grand');
   gEl.textContent = money(grand);
@@ -345,74 +328,78 @@ function renderPeople() {
   }
 }
 
-// Input events
+function renderSharedAll() {
+  const el = $('#sharedAll');
+  if (!people.length) { el.innerHTML = '<span class="muted">Add people first.</span>'; return; }
+  const shared = items.filter(i => i.sharedBy.length === people.length);
+  el.innerHTML = shared.length
+    ? shared.map(i => `<div style="display:flex; justify-content:space-between; padding:3px 0;"><span>${esc(i.name || '(unnamed)')}</span><span class="muted">${fmt(i.price)} ${cur()}</span></div>`).join('')
+    : '<span class="muted">No items shared by everyone yet. Tap "All" on an item.</span>';
+}
+
 document.addEventListener('input', e => {
   const t = e.target;
   if (t.dataset.field) {
     const item = items.find(i => i.id === +t.dataset.id);
     if (!item) return;
     if (t.dataset.field === 'price') item.price = parseFloat(t.value) || 0;
-    else item[t.dataset.field] = t.value;
+    else item.name = t.value;
     renderPeople();
   } else if (t.dataset.pid) {
     const p = people.find(x => x.id === +t.dataset.pid);
-    if (p) {
-      p.name = t.value;
-      $$(`.chip[data-person="${p.id}"]`).forEach(c => c.textContent = p.name);
-    }
-  } else if (t.id === 'service' || t.id === 'gst' || t.id === 'currency') {
+    if (!p) return;
+    p.name = t.value;
+    document.querySelectorAll(`.chip[data-person="${p.id}"]`).forEach(c => c.textContent = p.name);
+  } else if (['service', 'gst', 'currency'].includes(t.id)) {
     renderPeople();
   }
 });
 
-// Show "Did you mean" suggestions when clicking into an item name field
 document.addEventListener('focusin', e => {
   const t = e.target;
-  if (!(t.dataset && t.dataset.field === 'name')) return;
+  if (t.dataset?.field !== 'name') return;
   const item = items.find(i => i.id === +t.dataset.id);
-  if (!item) return;
-  const box = document.querySelector(`.suggest[data-suggest-for="${item.id}"]`);
-  if (!box) return;
-  const pool = [...new Set([...FOOD_SUGGESTIONS, ...COMMON_ITEMS])];
-  const scored = pool.map(c => ({ c, s: Math.max(sim((item.name||'').toLowerCase(), c.toLowerCase()), tokenScore(item.name||'', c)) }))
-    .filter(x => x.s >= 0.25 && x.c.toLowerCase() !== (item.name||'').toLowerCase())
+  const box = document.querySelector(`.suggest[data-suggest-for="${item?.id}"]`);
+  if (!item || !box) return;
+  const scored = POOL
+    .map(c => ({ c, s: score(item.name || '', c) }))
+    .filter(x => x.s >= 0.25 && x.c.toLowerCase() !== (item.name || '').toLowerCase())
     .sort((a, b) => b.s - a.s).slice(0, 4);
-  if (scored.length === 0) { box.style.display = 'none'; return; }
+  if (!scored.length) { box.classList.add('hidden'); return; }
   box.innerHTML = `<span class="muted" style="margin-right:6px;">Did you mean:</span>` +
-    scored.map(x => `<span class="chip" data-pick="${item.id}" data-value="${escapeHtml(x.c)}">${escapeHtml(x.c)}</span>`).join('');
-  box.style.display = 'flex';
-  box.style.flexWrap = 'wrap';
-  box.style.gap = '6px';
-  box.style.marginTop = '6px';
+    scored.map(x => `<span class="chip" data-pick="${item.id}" data-value="${esc(x.c)}">${esc(x.c)}</span>`).join('');
+  box.classList.remove('hidden');
 });
 document.addEventListener('focusout', e => {
   const t = e.target;
-  if (!(t.dataset && t.dataset.field === 'name')) return;
+  if (t.dataset?.field !== 'name') return;
   const id = +t.dataset.id;
   setTimeout(() => {
     const box = document.querySelector(`.suggest[data-suggest-for="${id}"]`);
-    if (box && document.activeElement !== t) box.style.display = 'none';
+    if (box && document.activeElement !== t) box.classList.add('hidden');
   }, 200);
 });
 
-// Click events
 document.addEventListener('click', e => {
   const t = e.target;
-  if (t.dataset.pick) {
-    const item = items.find(i => i.id === +t.dataset.pick);
-    if (item) { item.name = t.dataset.value; item.original = item.original || item.name; render(); }
-    return;
-  }
-  if (t.dataset.removeItem) removeItem(+t.dataset.removeItem);
-  else if (t.dataset.removePerson) removePerson(+t.dataset.removePerson);
-  else if (t.dataset.all) {
-    const item = items.find(i => i.id === +t.dataset.all);
+  const d = t.dataset;
+  if (d.pick) {
+    const item = items.find(i => i.id === +d.pick);
+    if (item) {
+      if (!item.original) item.original = item.name;
+      item.name = d.value;
+      render();
+    }
+  } else if (d.removeItem) removeItem(+d.removeItem);
+  else if (d.removePerson) removePerson(+d.removePerson);
+  else if (d.all) {
+    const item = items.find(i => i.id === +d.all);
     item.sharedBy = item.sharedBy.length === people.length ? [] : people.map(p => p.id);
     render();
-  }
-  else if (t.dataset.item && t.dataset.person) toggleShare(+t.dataset.item, +t.dataset.person);
-  else if (t.classList.contains('amount') && t.dataset.copy) {
-    navigator.clipboard.writeText(t.dataset.copy).then(() => {
+  } else if (d.item && d.person) {
+    toggleShare(+d.item, +d.person);
+  } else if (t.classList.contains('amount') && d.copy) {
+    navigator.clipboard.writeText(d.copy).then(() => {
       t.classList.add('copied');
       setTimeout(() => t.classList.remove('copied'), 1200);
     });
@@ -426,7 +413,6 @@ $('#reparse').onclick = () => {
   $('#progress').textContent = `Re-parsed: ${items.length} items.`;
 };
 
-// Theme
 function applyTheme(theme) {
   document.documentElement.dataset.theme = theme;
   $('#themeToggle').textContent = theme === 'dark' ? '☀️' : '🌙';
@@ -435,11 +421,9 @@ function applyTheme(theme) {
 $('#themeToggle').onclick = () => applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
 applyTheme(localStorage.getItem('theme') || 'dark');
 
-// Currency persist
 $('#currency').value = localStorage.getItem('currency') || 'MVR';
 $('#currency').addEventListener('change', () => localStorage.setItem('currency', $('#currency').value));
 
-// Image upload + lightbox
 $('#file').onchange = e => {
   const f = e.target.files[0];
   if (!f) return;
@@ -453,11 +437,10 @@ $('#file').onchange = e => {
 $('#preview').onclick = () => {
   if (!previewUrl) return;
   $('#lightboxImg').src = previewUrl;
-  $('#lightbox').style.display = 'flex';
+  $('#lightbox').classList.add('open');
 };
-$('#lightbox').onclick = () => $('#lightbox').style.display = 'none';
+$('#lightbox').onclick = () => $('#lightbox').classList.remove('open');
 
-// OCR
 $('#scan').onclick = async () => {
   const f = $('#file').files[0];
   if (!f) return;
@@ -480,16 +463,12 @@ $('#scan').onclick = async () => {
   }
 };
 
-function extractRestaurantName(rawLines) {
+function extractRestaurantName(lines) {
   const stopRe = /^(tax invoice|invoice|inv#|table\b|dine|receipt|order|bill|cashier|number of|covers|phone|gst number|date|time)/i;
-  for (const line of rawLines.slice(0, 6)) {
+  for (const line of lines.slice(0, 6)) {
     if (stopRe.test(line)) break;
-    // Strip trailing non-letter garbage and leading non-letter garbage
     const cleaned = line.replace(/[^A-Za-z0-9&'.\- ]+$/g, '').replace(/^[^A-Za-z0-9]+/, '').replace(/\s+/g, ' ').trim();
-    // Require some letters and reasonable length
-    if (/[A-Za-z]{3,}/.test(cleaned) && cleaned.length >= 4 && cleaned.length <= 40) {
-      return cleaned;
-    }
+    if (/[A-Za-z]{3,}/.test(cleaned) && cleaned.length >= 4 && cleaned.length <= 40) return cleaned;
   }
   return '';
 }
@@ -498,48 +477,52 @@ function parseOcrText(text) {
   const rawLines = text.split('\n').map(l => l.replace(/\s+/g, ' ').trim()).filter(Boolean);
   const rest = extractRestaurantName(rawLines);
   if (rest && !$('#restaurant').value.trim()) $('#restaurant').value = rest;
-  const priceTokenRe = /(\d{1,3}(?:,\d{3})+\.\d{2}|\d+\.\d{2}|\d+,\d{2})/g;
+
+  const priceRe = /(\d{1,3}(?:,\d{3})+\.\d{2}|\d+\.\d{2}|\d+,\d{2})/g;
   const skipRe = /^(total\b|balance|amount due|cash|change|visa|master|card\b|due\b|paid|tender|rounding|invoice|inv#|table\b|number of|covers|phone|dine|tax invoice|thank|gst number)/i;
   const fuzzySkipWords = ['total', 'subtotal', 'balance', 'invoice', 'change', 'tender', 'cashier', 'receipt', 'payment'];
   const isFuzzyHeader = line => {
-    const firstWord = (line.split(/\s+/)[0] || '').toLowerCase().replace(/[^a-z]/g, '');
-    if (firstWord.length < 4) return false;
-    return fuzzySkipWords.some(w => sim(firstWord, w) >= 0.7);
+    const w = (line.split(/\s+/)[0] || '').toLowerCase().replace(/[^a-z]/g, '');
+    return w.length >= 4 && fuzzySkipWords.some(k => sim(w, k) >= 0.7);
   };
   const svcRe = /(service|^s\s*\/?\s*c\b|^svc\b)/i;
   const gstRe = /^(gst|tax|vat)\b/i;
   const subtotalRe = /^sub[\s-]?total/i;
   const qtyRe = /^(\d+)\s+(.*)$/;
+  const parsePrice = s => s.includes(',') && s.includes('.')
+    ? parseFloat(s.replace(/,/g, ''))
+    : parseFloat(s.replace(',', '.'));
+
   let subtotal = null, svcAmt = null, gstAmt = null;
   const newItems = [];
-  const parsePrice = s => s.includes(',') && s.includes('.')
-    ? parseFloat(s.replace(/,/g, '')) : parseFloat(s.replace(',', '.'));
 
   for (const line of rawLines) {
-    const matches = [...line.matchAll(priceTokenRe)];
-    if (matches.length === 0) continue;
-    const lastMatch = matches[matches.length - 1];
-    const price = parsePrice(lastMatch[1]);
+    const matches = [...line.matchAll(priceRe)];
+    if (!matches.length) continue;
+    const last = matches[matches.length - 1];
+    const price = parsePrice(last[1]);
     if (isNaN(price) || price <= 0) continue;
-    let namePart = line.slice(0, lastMatch.index).trim();
+    let namePart = line.slice(0, last.index).trim();
     if (subtotalRe.test(namePart) || subtotalRe.test(line)) { subtotal = price; continue; }
     if (svcRe.test(namePart) || svcRe.test(line)) { svcAmt = price; continue; }
     if (gstRe.test(namePart) || gstRe.test(line)) { gstAmt = price; continue; }
     if (skipRe.test(namePart) || skipRe.test(line)) continue;
     if (isFuzzyHeader(namePart) || isFuzzyHeader(line)) continue;
+
     let qty = 1;
     const qm = namePart.match(qtyRe);
     if (qm) { qty = parseInt(qm[1], 10) || 1; namePart = qm[2]; }
-    namePart = namePart.replace(/^x\s+/i, '').replace(/\s+x\s*$/i, '').trim();
-    const name = namePart.replace(/\s+/g, ' ').trim();
+    const name = namePart.replace(/^x\s+/i, '').replace(/\s+x\s*$/i, '').replace(/\s+/g, ' ').trim();
     if (!name || name.length < 2) continue;
     if (/^\+?\d[\d\s-]{6,}$/.test(name)) continue;
     if (qty > 20) qty = 1;
+
     const unit = price / qty;
-    const pool = [...new Set([...FOOD_SUGGESTIONS, ...COMMON_ITEMS])];
-    const best = bestMatch(name, pool);
+    const best = bestMatch(name);
     const fixed = best && best.score >= 0.7 ? best.match : name;
-    for (let i = 0; i < qty; i++) newItems.push({ id: nextId++, name: fixed, original: name !== fixed ? name : null, price: +unit.toFixed(2), sharedBy: [] });
+    for (let i = 0; i < qty; i++) {
+      newItems.push({ id: nextId++, name: fixed, original: name !== fixed ? name : null, price: +unit.toFixed(2), sharedBy: [] });
+    }
   }
   items = newItems;
   if (subtotal && svcAmt) $('#service').value = ((svcAmt / subtotal) * 100).toFixed(1);
@@ -547,18 +530,8 @@ function parseOcrText(text) {
   render();
 }
 
-function renderSharedAll() {
-  const el = $('#sharedAll');
-  if (people.length === 0) { el.innerHTML = '<span class="muted">Add people first.</span>'; return; }
-  const shared = items.filter(i => i.sharedBy.length === people.length);
-  if (shared.length === 0) { el.innerHTML = '<span class="muted">No items shared by everyone yet. Tap "All" on an item.</span>'; return; }
-  el.innerHTML = shared.map(i => `<div style="display:flex; justify-content:space-between; padding:3px 0;"><span>${escapeHtml(i.name || '(unnamed)')}</span><span class="muted">${fmt(i.price)} ${cur()}</span></div>`).join('');
-}
+$('#foodSuggestions').innerHTML = FOOD_SUGGESTIONS.map(f => `<option value="${esc(f)}">`).join('');
 
-// Food suggestions
-$('#foodSuggestions').innerHTML = FOOD_SUGGESTIONS.map(f => `<option value="${escapeHtml(f)}">`).join('');
-
-// Export / Import JSON
 $('#exportJson').onclick = () => {
   const data = {
     restaurant: $('#restaurant').value,
@@ -569,11 +542,9 @@ $('#exportJson').onclick = () => {
     people,
     items,
   };
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  const stamp = new Date().toISOString().slice(0, 10);
-  a.download = `bill-${(data.restaurant || 'untitled').replace(/\W+/g, '-')}-${stamp}.json`;
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
+  a.download = `bill-${(data.restaurant || 'untitled').replace(/\W+/g, '-')}-${new Date().toISOString().slice(0, 10)}.json`;
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 };
@@ -598,18 +569,15 @@ $('#importFile').onchange = async e => {
   e.target.value = '';
 };
 
-// Copy markdown
 $('#copyMd').onclick = () => {
   const { perPerson, grand, unassignedSum, mult } = computeTotals();
   const meal = $('#mealType').value;
   const rest = $('#restaurant').value.trim();
-  const header = rest ? `${meal} — ${rest}` : meal;
-  const lines = [`*${header}*`, ''];
+  const lines = [`*${rest ? `${meal} — ${rest}` : meal}*`, ''];
   for (const p of perPerson) lines.push(`${p.name}: ${fmt(p.total)} ${cur()}`);
   if (unassignedSum > 0) lines.push(`Unassigned: ${fmt(unassignedSum * mult)} ${cur()}`);
   lines.push('', `_Total: ${fmt(grand)} ${cur()}_`);
-  const md = lines.join('\n');
-  navigator.clipboard.writeText(md).then(() => {
+  navigator.clipboard.writeText(lines.join('\n')).then(() => {
     const btn = $('#copyMd');
     const orig = btn.textContent;
     btn.textContent = 'Copied ✓';
@@ -617,7 +585,6 @@ $('#copyMd').onclick = () => {
   });
 };
 
-// Seed
 addPerson('Me');
 addPerson('Person 1');
 addPerson('Person 2');
