@@ -302,6 +302,7 @@ function render() {
         ${people.map(p => `<span class="chip ${item.sharedBy.includes(p.id) ? 'on' : ''}" data-item="${item.id}" data-person="${p.id}">${escapeHtml(p.name)}</span>`).join('')}
         ${people.length === 0 ? '<span class="muted">Add people first →</span>' : ''}
       </div>
+      <div class="suggest" data-suggest-for="${item.id}" style="width:100%; display:none;"></div>
     `;
     itemsEl.appendChild(row);
   }
@@ -364,9 +365,44 @@ document.addEventListener('input', e => {
   }
 });
 
+// Show "Did you mean" suggestions when clicking into an item name field
+document.addEventListener('focusin', e => {
+  const t = e.target;
+  if (!(t.dataset && t.dataset.field === 'name')) return;
+  const item = items.find(i => i.id === +t.dataset.id);
+  if (!item) return;
+  const box = document.querySelector(`.suggest[data-suggest-for="${item.id}"]`);
+  if (!box) return;
+  const pool = [...new Set([...FOOD_SUGGESTIONS, ...COMMON_ITEMS])];
+  const scored = pool.map(c => ({ c, s: Math.max(sim((item.name||'').toLowerCase(), c.toLowerCase()), tokenScore(item.name||'', c)) }))
+    .filter(x => x.s >= 0.25 && x.c.toLowerCase() !== (item.name||'').toLowerCase())
+    .sort((a, b) => b.s - a.s).slice(0, 4);
+  if (scored.length === 0) { box.style.display = 'none'; return; }
+  box.innerHTML = `<span class="muted" style="margin-right:6px;">Did you mean:</span>` +
+    scored.map(x => `<span class="chip" data-pick="${item.id}" data-value="${escapeHtml(x.c)}">${escapeHtml(x.c)}</span>`).join('');
+  box.style.display = 'flex';
+  box.style.flexWrap = 'wrap';
+  box.style.gap = '6px';
+  box.style.marginTop = '6px';
+});
+document.addEventListener('focusout', e => {
+  const t = e.target;
+  if (!(t.dataset && t.dataset.field === 'name')) return;
+  const id = +t.dataset.id;
+  setTimeout(() => {
+    const box = document.querySelector(`.suggest[data-suggest-for="${id}"]`);
+    if (box && document.activeElement !== t) box.style.display = 'none';
+  }, 200);
+});
+
 // Click events
 document.addEventListener('click', e => {
   const t = e.target;
+  if (t.dataset.pick) {
+    const item = items.find(i => i.id === +t.dataset.pick);
+    if (item) { item.name = t.dataset.value; item.original = item.original || item.name; render(); }
+    return;
+  }
   if (t.dataset.removeItem) removeItem(+t.dataset.removeItem);
   else if (t.dataset.removePerson) removePerson(+t.dataset.removePerson);
   else if (t.dataset.all) {
@@ -464,6 +500,12 @@ function parseOcrText(text) {
   if (rest && !$('#restaurant').value.trim()) $('#restaurant').value = rest;
   const priceTokenRe = /(\d{1,3}(?:,\d{3})+\.\d{2}|\d+\.\d{2}|\d+,\d{2})/g;
   const skipRe = /^(total\b|balance|amount due|cash|change|visa|master|card\b|due\b|paid|tender|rounding|invoice|inv#|table\b|number of|covers|phone|dine|tax invoice|thank|gst number)/i;
+  const fuzzySkipWords = ['total', 'subtotal', 'balance', 'invoice', 'change', 'tender', 'cashier', 'receipt', 'payment'];
+  const isFuzzyHeader = line => {
+    const firstWord = (line.split(/\s+/)[0] || '').toLowerCase().replace(/[^a-z]/g, '');
+    if (firstWord.length < 4) return false;
+    return fuzzySkipWords.some(w => sim(firstWord, w) >= 0.7);
+  };
   const svcRe = /(service|^s\s*\/?\s*c\b|^svc\b)/i;
   const gstRe = /^(gst|tax|vat)\b/i;
   const subtotalRe = /^sub[\s-]?total/i;
@@ -484,6 +526,7 @@ function parseOcrText(text) {
     if (svcRe.test(namePart) || svcRe.test(line)) { svcAmt = price; continue; }
     if (gstRe.test(namePart) || gstRe.test(line)) { gstAmt = price; continue; }
     if (skipRe.test(namePart) || skipRe.test(line)) continue;
+    if (isFuzzyHeader(namePart) || isFuzzyHeader(line)) continue;
     let qty = 1;
     const qm = namePart.match(qtyRe);
     if (qm) { qty = parseInt(qm[1], 10) || 1; namePart = qm[2]; }
